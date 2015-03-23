@@ -31,8 +31,4 @@
     <string name="forward_lookup_provider_title">Forward lookup provider</string>
     <string name="people_lookup_provider_title">People lookup provider</string>
     <string name="reverse_lookup_provider_title">Reverse lookup provider</string>
-
-    <!-- Contact details on incoming call -->
-    <string name="detailed_incall_info_title">Detailed caller information</string>
-    <string name="detailed_incall_info_summary">Display additional information about the caller in the incoming call screen</string>
 </resources>
