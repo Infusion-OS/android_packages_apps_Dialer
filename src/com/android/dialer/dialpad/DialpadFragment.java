@@ -709,6 +709,10 @@ public class DialpadFragment extends Fragment
 
         stopWatch.stopAndLog(TAG, 50);
 
+        if (!isPhoneInUse() && isSmartCallEnabled()) {
+            mPickupDetector.enable();
+        }
+
         mSmsPackageComponentName = DialerUtils.getSmsComponent(activity);
 
         // Populate the overflow menu in onResume instead of onCreate, so that if the SMS activity
