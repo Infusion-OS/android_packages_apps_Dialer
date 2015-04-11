@@ -17,6 +17,7 @@ package com.android.dialer.calllog;
 
 import android.app.ActionBar;
 import android.app.ActionBar.LayoutParams;
+import android.app.Activity;
 import android.app.Fragment;
 import android.app.FragmentManager;
 import android.app.FragmentTransaction;
@@ -46,13 +47,14 @@ import android.util.Log;
 
 import com.android.contacts.common.interactions.TouchPointManager;
 import com.android.contacts.common.list.ViewPagerTabs;
+import com.android.contacts.commonbind.analytics.AnalyticsUtil;
 import com.android.dialer.DialtactsActivity;
 import com.android.dialer.R;
 import com.android.dialer.voicemail.VoicemailStatusHelper;
 import com.android.dialer.voicemail.VoicemailStatusHelperImpl;
-import com.android.dialerbind.analytics.AnalyticsActivity;
 
-public class CallLogActivity extends AnalyticsActivity implements CallLogQueryHandler.Listener {
+public class CallLogActivity extends Activity implements CallLogQueryHandler.Listener,
+    ViewPager.OnPageChangeListener {
     private Handler mHandler;
     private ViewPager mViewPager;
     private ViewPagerTabs mViewPagerTabs;
@@ -211,9 +213,9 @@ public class CallLogActivity extends AnalyticsActivity implements CallLogQueryHa
         mViewPagerAdapter = new ViewPagerAdapter(getFragmentManager());
         mViewPager.setAdapter(mViewPagerAdapter);
         mViewPager.setOffscreenPageLimit(2);
+        mViewPager.setOnPageChangeListener(this);
 
         mViewPagerTabs = (ViewPagerTabs) findViewById(R.id.viewpager_header);
-        mViewPager.setOnPageChangeListener(mViewPagerTabs);
 
         if (startingTab == TAB_INDEX_VOICEMAIL) {
             // The addition of the voicemail tab is an asynchronous process, so wait till the tab
@@ -240,6 +242,7 @@ public class CallLogActivity extends AnalyticsActivity implements CallLogQueryHa
         CallLogQueryHandler callLogQueryHandler =
                 new CallLogQueryHandler(this.getContentResolver(), this);
         callLogQueryHandler.fetchVoicemailStatus();
+        sendScreenViewForChildFragment(mViewPager.getCurrentItem());
     }
 
     @Override
@@ -295,7 +298,6 @@ public class CallLogActivity extends AnalyticsActivity implements CallLogQueryHa
             }
         // If onPrepareOptionsMenu is called before fragments loaded. Don't do anything.
         if (mAllCallsFragment != null && itemDeleteAll != null) {
-            // If onPrepareOptionsMenu is called before fragments are loaded, don't do anything.
             final CallLogAdapter adapter = mAllCallsFragment.getAdapter();
             itemDeleteAll.setVisible(adapter != null && !adapter.isEmpty());
         }
@@ -566,5 +568,44 @@ public class CallLogActivity extends AnalyticsActivity implements CallLogQueryHa
         mSearchView.onActionViewCollapsed();
         mSearchView.clearFocus();
         mInSearchUi = false;
+    }
+
+    @Override
+    public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {
+        mViewPagerTabs.onPageScrolled(position, positionOffset, positionOffsetPixels);
+    }
+
+    @Override
+    public void onPageSelected(int position) {
+        if (isResumed()) {
+            sendScreenViewForChildFragment(position);
+        }
+        mViewPagerTabs.onPageSelected(position);
+    }
+
+    @Override
+    public void onPageScrollStateChanged(int state) {
+        mViewPagerTabs.onPageScrollStateChanged(state);
+    }
+
+    private void sendScreenViewForChildFragment(int position) {
+        AnalyticsUtil.sendScreenView(CallLogFragment.class.getSimpleName(), this,
+                getFragmentTagForPosition(position));
+    }
+
+    /**
+     * Returns the fragment located at the given position in the {@link ViewPagerAdapter}. May
+     * be null if the position is invalid.
+     */
+    private String getFragmentTagForPosition(int position) {
+        switch (position) {
+            case TAB_INDEX_ALL:
+                return "All";
+            case TAB_INDEX_MISSED:
+                return "Missed";
+            case TAB_INDEX_VOICEMAIL:
+                return "Voicemail";
+        }
+        return null;
     }
 }
