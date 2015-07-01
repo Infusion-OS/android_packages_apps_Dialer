@@ -16,11 +16,16 @@
 
 package com.android.dialer;
 
+import android.app.Activity;
+import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Resources;
 import android.database.Cursor;
 import android.net.Uri;
@@ -29,8 +34,11 @@ import android.os.Bundle;
 import android.provider.CallLog;
 import android.provider.CallLog.Calls;
 import android.provider.ContactsContract.CommonDataKinds.Phone;
+import android.provider.ContactsContract.Contacts;
+import android.provider.ContactsContract.RawContacts;
 import android.provider.VoicemailContract.Voicemails;
 import android.telecom.PhoneAccount;
+import android.telecom.PhoneAccountHandle;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.text.BidiFormatter;
@@ -52,6 +60,7 @@ import com.android.contacts.common.ContactPhotoManager;
 import com.android.contacts.common.CallUtil;
 import com.android.contacts.common.ContactPhotoManager.DefaultImageRequest;
 import com.android.contacts.common.GeoUtil;
+import com.android.contacts.common.MoreContactUtils;
 import com.android.dialer.calllog.CallDetailHistoryAdapter;
 import com.android.dialer.calllog.CallTypeHelper;
 import com.android.dialer.calllog.ContactInfo;
@@ -66,7 +75,8 @@ import com.android.dialer.voicemail.VoicemailPlaybackFragment;
 import com.android.dialer.voicemail.VoicemailStatusHelper;
 import com.android.dialer.voicemail.VoicemailStatusHelper.StatusMessage;
 import com.android.dialer.voicemail.VoicemailStatusHelperImpl;
-import com.android.dialerbind.analytics.AnalyticsActivity;
+
+import com.android.internal.telephony.PhoneConstants;
 
 import java.util.List;
 
@@ -76,11 +86,8 @@ import java.util.List;
  * This activity can be either started with the URI of a single call log entry, or with the
  * {@link #EXTRA_CALL_LOG_IDS} extra to specify a group of call log entries.
  */
-public class CallDetailActivity extends AnalyticsActivity implements ProximitySensorAware {
+public class CallDetailActivity extends Activity implements ProximitySensorAware {
     private static final String TAG = "CallDetail";
-
-    private static final int LOADER_ID = 0;
-    private static final String BUNDLE_CONTACT_URI_EXTRA = "contact_uri_extra";
 
     private static final char LEFT_TO_RIGHT_EMBEDDING = '\u202A';
     private static final char POP_DIRECTIONAL_FORMATTING = '\u202C';
@@ -145,6 +152,13 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
     private boolean mHasTrashOption;
     /** Whether we should show "remove from call log" in the options menu. */
     private boolean mHasRemoveFromCallLogOption;
+
+    /** Add for black/white list. */
+    private boolean mHasInstallFireWallOption = false;
+    private static final String NUMBER_KEY = "number";
+    private static final String MODE_KEY = "mode";
+    private static final String FIREWALL_APK_NAME = "com.android.firewall";
+    private static final String FIREWALL_BLACK_WHITE_LIST = "com.android.firewall.FirewallListPage";
 
     private ProximitySensorManager mProximitySensorManager;
     private final ProximitySensorListener mProximitySensorListener = new ProximitySensorListener();
@@ -212,7 +226,8 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
         CallLog.Calls.PHONE_ACCOUNT_ID,
         CallLog.Calls.FEATURES,
         CallLog.Calls.DATA_USAGE,
-        CallLog.Calls.TRANSCRIPTION
+        CallLog.Calls.TRANSCRIPTION,
+        CallLog.Calls.DURATION_TYPE
     };
 
     static final int DATE_COLUMN_INDEX = 0;
@@ -227,6 +242,7 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
     static final int FEATURES = 9;
     static final int DATA_USAGE = 10;
     static final int TRANSCRIPTION_COLUMN_INDEX = 11;
+    static final int DURATION_TYPE_COLUMN_INDEX = 12;
 
     @Override
     protected void onCreate(Bundle icicle) {
@@ -239,7 +255,7 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
         mResources = getResources();
 
         mCallTypeHelper = new CallTypeHelper(getResources());
-        mPhoneNumberHelper = new PhoneNumberDisplayHelper(mResources);
+        mPhoneNumberHelper = new PhoneNumberDisplayHelper(this, mResources);
         mVoicemailStatusHelper = new VoicemailStatusHelperImpl();
         mAsyncQueryHandler = new CallDetailActivityQueryHandler(this);
 
@@ -266,6 +282,20 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
     public void onResume() {
         super.onResume();
         updateData(getCallLogEntryUris());
+
+        mHasInstallFireWallOption = isFireWallInstalled();
+    }
+
+    private boolean isFireWallInstalled() {
+        boolean installed = false;
+        try {
+            ApplicationInfo info = getPackageManager().getApplicationInfo(
+                    FIREWALL_APK_NAME, PackageManager.GET_PROVIDERS);
+            installed = (info != null);
+        } catch (NameNotFoundException e) {
+        }
+        Log.d(TAG, "Is Firewall installed ? " + installed);
+        return installed;
     }
 
     /**
@@ -380,7 +410,7 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
     /**
      * Update user interface with details of given call.
      *
-     * @param callUris URIs into {@link CallLog.Calls} of the calls to be displayed
+     * @param callUris URIs into {@link android.provider.CallLog.Calls} of the calls to be displayed
      */
     private void updateData(final Uri... callUris) {
         class UpdateContactDetailsTask extends AsyncTask<Void, Void, PhoneCallDetails[]> {
@@ -404,9 +434,11 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
 
             @Override
             public void onPostExecute(PhoneCallDetails[] details) {
+                Context context = CallDetailActivity.this;
+
                 if (details == null) {
                     // Somewhere went wrong: we're going to bail out and show error to users.
-                    Toast.makeText(CallDetailActivity.this, R.string.toast_call_detail_error,
+                    Toast.makeText(context, R.string.toast_call_detail_error,
                             Toast.LENGTH_SHORT).show();
                     finish();
                     return;
@@ -419,25 +451,26 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
                 final int numberPresentation = firstDetails.numberPresentation;
                 final Uri contactUri = firstDetails.contactUri;
                 final Uri photoUri = firstDetails.photoUri;
-                final int subId = firstDetails.accountId;
+                final PhoneAccountHandle accountHandle = firstDetails.accountHandle;
 
                 // Cache the details about the phone number.
                 final boolean canPlaceCallsTo =
                     PhoneNumberUtilsWrapper.canPlaceCallsTo(mNumber, numberPresentation);
-                final PhoneNumberUtilsWrapper phoneUtils = new PhoneNumberUtilsWrapper();
-                final boolean isVoicemailNumber = phoneUtils.isVoicemailNumber(subId, mNumber);
-                final boolean isSipNumber = phoneUtils.isSipNumber(mNumber);
+                final PhoneNumberUtilsWrapper phoneUtils = new PhoneNumberUtilsWrapper(context);
+                final boolean isVoicemailNumber =
+                        phoneUtils.isVoicemailNumber(accountHandle, mNumber);
+                final boolean isSipNumber = PhoneNumberUtilsWrapper.isSipNumber(mNumber);
 
                 final CharSequence callLocationOrType = getNumberTypeOrLocation(firstDetails);
 
-                final CharSequence displayNumber = mPhoneNumberHelper.getDisplayNumber(
-                        subId,
-                        firstDetails.number,
-                        firstDetails.numberPresentation,
-                        firstDetails.formattedNumber);
+                final CharSequence displayNumber =
+                        mPhoneNumberHelper.getDisplayNumber(
+                                firstDetails.accountHandle,
+                                firstDetails.number,
+                                firstDetails.numberPresentation,
+                                firstDetails.formattedNumber);
                 final String displayNumberStr = mBidiFormatter.unicodeWrap(
                         displayNumber.toString(), TextDirectionHeuristics.LTR);
-
 
                 if (!TextUtils.isEmpty(firstDetails.name)) {
                     mCallerName.setText(firstDetails.name);
@@ -452,8 +485,9 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
                     }
                 }
 
-                if (!TextUtils.isEmpty(firstDetails.accountLabel)) {
-                    mAccountLabel.setText(firstDetails.accountLabel);
+                String accountLabel = PhoneAccountUtils.getAccountLabel(context, accountHandle);
+                if (!TextUtils.isEmpty(accountLabel)) {
+                    mAccountLabel.setText(accountLabel);
                     mAccountLabel.setVisibility(View.VISIBLE);
                 } else {
                     mAccountLabel.setVisibility(View.GONE);
@@ -467,8 +501,7 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
 
                 ListView historyList = (ListView) findViewById(R.id.history);
                 historyList.setAdapter(
-                        new CallDetailHistoryAdapter(CallDetailActivity.this, mInflater,
-                                mCallTypeHelper, details));
+                        new CallDetailHistoryAdapter(context, mInflater, mCallTypeHelper, details));
 
                 String lookupKey = contactUri == null ? null
                         : ContactInfoHelper.getLookupKeyFromUri(contactUri);
@@ -483,7 +516,7 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
                 String nameForDefaultImage;
                 if (TextUtils.isEmpty(firstDetails.name)) {
                     nameForDefaultImage = mPhoneNumberHelper.getDisplayNumber(
-                            firstDetails.accountId,
+                            firstDetails.accountHandle,
                             firstDetails.number,
                             firstDetails.numberPresentation,
                             firstDetails.formattedNumber).toString();
@@ -539,16 +572,11 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
             String countryIso = callCursor.getString(COUNTRY_ISO_COLUMN_INDEX);
             final String geocode = callCursor.getString(GEOCODED_LOCATION_COLUMN_INDEX);
             final String transcription = callCursor.getString(TRANSCRIPTION_COLUMN_INDEX);
+            final int durationType = callCursor.getInt(DURATION_TYPE_COLUMN_INDEX);
 
-            final String accountLabel = PhoneAccountUtils.getAccountLabel(this,
-                    PhoneAccountUtils.getAccount(
+            final PhoneAccountHandle accountHandle = PhoneAccountUtils.getAccount(
                     callCursor.getString(ACCOUNT_COMPONENT_NAME),
-                    callCursor.getString(ACCOUNT_ID)));
-            String accId = callCursor.getString(ACCOUNT_ID);
-            int subId = SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
-            if (accId!=null && !accId.equals("E") && !accId.toLowerCase().contains("sip")) {
-                subId = Integer.parseInt(accId);
-            }
+                    callCursor.getString(ACCOUNT_ID));
 
             if (TextUtils.isEmpty(countryIso)) {
                 countryIso = mDefaultCountryIso;
@@ -566,11 +594,11 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
             // If this is not a regular number, there is no point in looking it up in the contacts.
             ContactInfo info =
                     PhoneNumberUtilsWrapper.canPlaceCallsTo(number, numberPresentation)
-                    && !new PhoneNumberUtilsWrapper().isVoicemailNumber(subId, number)
+                    && !new PhoneNumberUtilsWrapper(this).isVoicemailNumber(accountHandle, number)
                             ? mContactInfoHelper.lookupNumber(number, countryIso)
                             : null;
             if (info == null) {
-                formattedNumber = mPhoneNumberHelper.getDisplayNumber(subId, number,
+                formattedNumber = mPhoneNumberHelper.getDisplayNumber(accountHandle, number,
                         numberPresentation, null);
                 nameText = "";
                 numberType = 0;
@@ -596,7 +624,7 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
                     formattedNumber, countryIso, geocode,
                     new int[]{ callType }, date, duration,
                     nameText, numberType, numberLabel, lookupUri, photoUri, sourceType,
-                    accountLabel, null, features, dataUsage, transcription, subId);
+                    accountHandle, features, dataUsage, transcription);
         } finally {
             if (callCursor != null) {
                 callCursor.close();
@@ -616,7 +644,7 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
                 mResources.getString(R.string.description_contact_details, displayName));
 
         mContactPhotoManager.loadDirectoryPhoto(mQuickContactBadge, photoUri,
-                null, false /* darkTheme */, true /* isCircular */, request);
+                false /* darkTheme */, true /* isCircular */, request);
     }
 
     static final class ViewEntry {
@@ -703,7 +731,45 @@ public class CallDetailActivity extends AnalyticsActivity implements ProximitySe
         menu.findItem(R.id.menu_remove_from_call_log).setVisible(mHasRemoveFromCallLogOption);
         menu.findItem(R.id.menu_edit_number_before_call).setVisible(mHasEditNumberBeforeCallOption);
         menu.findItem(R.id.menu_trash).setVisible(mHasTrashOption);
+
+        menu.findItem(R.id.menu_video_call).setVisible(CallUtil.isCSVTEnabled());
+
+        menu.findItem(R.id.menu_add_to_black_list).setVisible(mHasInstallFireWallOption);
+        menu.findItem(R.id.menu_add_to_white_list).setVisible(mHasInstallFireWallOption);
+
         return super.onPrepareOptionsMenu(menu);
+    }
+
+    public void onMenuVideoCall(MenuItem menuItem) {
+        if (CallUtil.isCSVTEnabled()) {
+            startActivity(CallUtil.getCSVTCallIntent(mNumber));
+        } else if (false) {
+            //add support for ims video call;
+        }
+    }
+
+    public void onMenuAddToBlackList(MenuItem menuItem) {
+        Bundle blackBundle = new Bundle();
+        blackBundle.putString(NUMBER_KEY, mNumber);
+        blackBundle.putString(MODE_KEY, "blacklist");
+
+        Intent blackIntent = new Intent();
+        blackIntent.setClassName(FIREWALL_APK_NAME, FIREWALL_BLACK_WHITE_LIST);
+        blackIntent.setAction(Intent.ACTION_INSERT);
+        blackIntent.putExtras(blackBundle);
+        startActivity(blackIntent);
+    }
+
+    public void onMenuAddToWhiteList(MenuItem menuItem) {
+        Bundle whiteBundle = new Bundle();
+        whiteBundle.putString(NUMBER_KEY, mNumber);
+        whiteBundle.putString(MODE_KEY, "whitelist");
+
+        Intent whiteIntent = new Intent();
+        whiteIntent.setClassName(FIREWALL_APK_NAME, FIREWALL_BLACK_WHITE_LIST);
+        whiteIntent.setAction(Intent.ACTION_INSERT);
+        whiteIntent.putExtras(whiteBundle);
+        startActivity(whiteIntent);
     }
 
     public void onMenuRemoveFromCallLog(MenuItem menuItem) {

@@ -16,8 +16,6 @@
 
 package com.android.dialer.widget;
 
-import android.app.ActionBar;
-import android.app.Activity;
 import android.content.Context;
 import android.test.ActivityInstrumentationTestCase2;
 import android.test.AndroidTestCase;
@@ -86,8 +84,13 @@ public class ActionBarControllerTest extends ActivityInstrumentationTestCase2<Di
         }
 
         @Override
-        public ActionBar getActionBar() {
-            return mActionBar;
+        public int getActionBarHideOffset() {
+            return actionBarHideOffset;
+        }
+
+        @Override
+        public void setActionBarHideOffset(int offset) {
+            actionBarHideOffset = offset;
         }
     }
 

@@ -47,13 +47,13 @@
             android:persistent="false"
             android:ringtoneType="ringtone" />
 
-        <CheckBoxPreference
+        <SwitchPreference
             android:key="button_play_dtmf_tone"
             android:title="@string/dtmf_tone_enable_title"
             android:persistent="false"
             android:defaultValue="true" />
 
-        <CheckBoxPreference
+        <SwitchPreference
             android:key="button_vibrate_on_ring"
             android:title="@string/vibrate_on_ring_title"
             android:persistent="false"
@@ -62,9 +62,46 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="button_dialpad_t9_search_category_key"
+        android:title="@string/preference_category_t9_dialpad_search"
+        android:persistent="false">
+
+        <ListPreference
+            android:key="button_t9_search_input"
+            android:title="@string/t9_search_input_locale"
+            android:summary="%s"
+            android:defaultValue=""
+            android:persistent="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="dialer_general_sensors_category_key"
+        android:title="@string/sensors_category_title"
+        android:persistent="false">
+
+        <SwitchPreference
+            android:key="button_smart_dialer"
+            android:title="@string/smart_dialer_title"
+            android:summary="@string/smart_dialer_summary"
+            android:defaultValue="false" />
+
+        <SwitchPreference
+            android:key="button_smart_mute"
+            android:title="@string/smart_mute_title"
+            android:summary="@string/smart_mute_summary"
+            android:defaultValue="false" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
         android:key="dialer_general_other_settings_category_key"
         android:title="@string/other_settings_title"
         android:persistent="false" >
+
+        <SwitchPreference
+            android:key="detailed_incall_info"
+            android:title="@string/detailed_incall_info_title"
+            android:summary="@string/detailed_incall_info_summary" />
 
         <PreferenceScreen
             android:key="button_respond_via_sms_key"

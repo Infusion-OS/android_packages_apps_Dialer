@@ -19,6 +19,10 @@ package com.android.dialer.widget;
 import android.animation.ValueAnimator;
 import android.animation.ValueAnimator.AnimatorUpdateListener;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.speech.RecognizerIntent;
 import android.util.AttributeSet;
 import android.view.KeyEvent;
 import android.view.View;
@@ -28,6 +32,8 @@ import android.widget.FrameLayout;
 import com.android.dialer.R;
 import com.android.dialer.util.DialerUtils;
 import com.android.phone.common.animation.AnimUtils;
+
+import java.util.List;
 
 public class SearchEditTextLayout extends FrameLayout {
     private static final float EXPAND_MARGIN_FRACTION_START = 0.8f;
@@ -100,6 +106,17 @@ public class SearchEditTextLayout extends FrameLayout {
         mBackButtonView = findViewById(R.id.search_back_button);
         mExpandedSearchBox = findViewById(R.id.search_box_expanded);
         mClearButtonView = findViewById(R.id.search_close_button);
+
+        // Convert a long click into a click to expand the search box, and then long click on the
+        // search view. This accelerates the long-press scenario for copy/paste.
+        mCollapsedSearchBox.setOnLongClickListener(new OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+                mCollapsedSearchBox.performClick();
+                mSearchView.performLongClick();
+                return false;
+            }
+        });
 
         mSearchView.setOnFocusChangeListener(new OnFocusChangeListener() {
             @Override
@@ -228,7 +245,11 @@ public class SearchEditTextLayout extends FrameLayout {
 
         mSearchIcon.setVisibility(collapsedViewVisibility);
         mCollapsedSearchBox.setVisibility(collapsedViewVisibility);
-        mVoiceSearchButtonView.setVisibility(collapsedViewVisibility);
+        if (!isExpand && canIntentBeHandled()) {
+            mVoiceSearchButtonView.setVisibility(collapsedViewVisibility);
+        } else {
+            mVoiceSearchButtonView.setVisibility(View.GONE);
+        }
         mOverflowButtonView.setVisibility(collapsedViewVisibility);
         mBackButtonView.setVisibility(expandedViewVisibility);
         // TODO: Prevents keyboard from jumping up in landscape mode after exiting the
@@ -274,5 +295,13 @@ public class SearchEditTextLayout extends FrameLayout {
         params.leftMargin = (int) (mLeftMargin * fraction);
         params.rightMargin = (int) (mRightMargin * fraction);
         requestLayout();
+    }
+
+    private boolean canIntentBeHandled() {
+        final Intent voiceIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        final PackageManager packageManager = getContext().getPackageManager();
+        final List<ResolveInfo> resolveInfo = packageManager.queryIntentActivities(voiceIntent,
+                PackageManager.MATCH_DEFAULT_ONLY);
+        return resolveInfo != null && resolveInfo.size() > 0;
     }
 }
